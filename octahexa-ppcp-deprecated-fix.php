@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       OctaHexa PPCP Deprecated Property Fix
- * Plugin URI:        https://octahexa.com/plugins/octahexa-ppcp-deprecated-fix
+ * Plugin URI:        https://github.com/WPSpeedExpert/octahexa-ppcp-deprecated-fix
  * Description:       Prevents high CPU usage and fatal errors from deprecated property creation and missing trait usage in the AngellEYE PayPal plugin.
  * Version:           1.1.0
  * Author:            OctaHexa
