@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       OctaHexa PPCP Deprecated Property Fix
  * Plugin URI:        https://octahexa.com/plugins/octahexa-ppcp-deprecated-fix
- * Description:       Prevents high CPU usage from deprecated property creation in the AngellEYE PayPal plugin by patching missing properties safely on plugin load.
- * Version:           1.0.3
+ * Description:       Prevents high CPU usage and fatal errors from deprecated property creation and missing trait usage in the AngellEYE PayPal plugin.
+ * Version:           1.0.5
  * Author:            OctaHexa
  * Author URI:        https://octahexa.com
  * Text Domain:       octahexa-ppcp-fix
@@ -22,12 +22,21 @@ if (!defined('ABSPATH')) {
 
 add_action('plugins_loaded', 'oh_patch_ppcp_deprecated_properties', 11);
 
-/**
- * Patch deprecated dynamic properties in the AngellEYE PPCP gateway if needed.
- */
 function oh_patch_ppcp_deprecated_properties() {
-    if (!class_exists('WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP')) {
-        update_option('oh_ppcp_fix_status', 'class_missing');
+    // Prevent fatal error if trait used by the PayPal plugin is not loaded
+    if (!trait_exists('WC_PPCP_Pre_Orders_Trait') && defined('PAYPAL_FOR_WOOCOMMERCE_PLUGIN_DIR')) {
+        $trait_file = PAYPAL_FOR_WOOCOMMERCE_PLUGIN_DIR . '/ppcp-gateway/traits/class-wc-ppcp-pre-orders-trait.php';
+        if (file_exists($trait_file)) {
+            require_once $trait_file;
+        } else {
+            update_option('oh_ppcp_fix_status', 'trait_missing');
+            return;
+        }
+    }
+
+    // Prevent fatal error if the PayPal class is not loaded or missing its method
+    if (!class_exists('WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP') || !method_exists('WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP', 'get_instance')) {
+        update_option('oh_ppcp_fix_status', 'class_or_method_missing');
         return;
     }
 
@@ -54,9 +63,6 @@ function oh_patch_ppcp_deprecated_properties() {
     update_option('oh_ppcp_fix_status', 'patched:' . implode(',', $missing));
 }
 
-/**
- * Display admin notice about patch status.
- */
 add_action('admin_notices', 'oh_ppcp_admin_notice');
 
 function oh_ppcp_admin_notice() {
@@ -66,8 +72,10 @@ function oh_ppcp_admin_notice() {
 
     $status = get_option('oh_ppcp_fix_status');
 
-    if ($status === 'class_missing') {
-        echo '<div class="notice notice-warning is-dismissible"><p><strong>OctaHexa PPCP Fix:</strong> Target PayPal class not loaded yet. Please ensure the PayPal for WooCommerce plugin is active.</p></div>';
+    if ($status === 'trait_missing') {
+        echo '<div class="notice notice-error is-dismissible"><p><strong>OctaHexa PPCP Fix:</strong> Required trait <code>WC_PPCP_Pre_Orders_Trait</code> could not be loaded. File is missing.</p></div>';
+    } elseif ($status === 'class_or_method_missing') {
+        echo '<div class="notice notice-warning is-dismissible"><p><strong>OctaHexa PPCP Fix:</strong> PayPal class or method not found. Plugin may be inactive or loading too late.</p></div>';
     } elseif ($status === 'already_patched') {
         echo '<div class="notice notice-success is-dismissible"><p><strong>OctaHexa PPCP Fix:</strong> No deprecated properties found — patch not required.</p></div>';
     } elseif (strpos($status, 'patched:') === 0) {
