@@ -13,7 +13,7 @@
  * License:           GPLv3 or later
  * License URI:       https://www.gnu.org/licenses/gpl-3.0.html
  * GitHub Plugin URI: https://github.com/WPSpeedExpert/octahexa-ppcp-deprecated-fix
- * GitHub Branch:     main
+ * Primary Branch:    main
  */
 
 if (!defined('ABSPATH')) {
