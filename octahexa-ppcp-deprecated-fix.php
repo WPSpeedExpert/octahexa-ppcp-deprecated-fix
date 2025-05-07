@@ -3,7 +3,7 @@
  * Plugin Name:       OctaHexa PPCP Deprecated Property Fix
  * Plugin URI:        https://github.com/WPSpeedExpert/octahexa-ppcp-deprecated-fix
  * Description:       Prevents high CPU usage and fatal errors in PayPal for WooCommerce plugin (PHP 8.4 compatibility).
- * Version:           1.7.0
+ * Version:           2.0.0
  * Author:            OctaHexa
  * Author URI:        https://octahexa.com
  * Text Domain:       octahexa-ppcp-fix
@@ -21,12 +21,12 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('OH_PPCP_FIX_VERSION', '1.7.0');
+define('OH_PPCP_FIX_VERSION', '2.0.0');
 define('OH_PPCP_FIX_PLUGIN_FILE', __FILE__);
 
 // Make our load action run very early
-add_action('plugins_loaded', 'oh_load_ppcp_trait_file', 5); // Priority 5 ensures it runs early
-add_action('plugins_loaded', 'oh_patch_ppcp_deprecated_properties', 20); 
+add_action('muplugins_loaded', 'oh_load_ppcp_trait_file'); // Run at the earliest possible hook
+add_action('plugins_loaded', 'oh_patch_ppcp_deprecated_properties', 20);
 add_action('admin_menu', 'oh_ppcp_fix_add_settings_page');
 add_action('admin_enqueue_scripts', 'oh_ppcp_fix_admin_styles');
 add_filter('plugin_action_links_' . plugin_basename(__FILE__), 'oh_ppcp_fix_plugin_settings_link');
@@ -60,7 +60,7 @@ function oh_load_ppcp_trait_file() {
 }
 
 /**
- * Apply patch to PayPal classes to fix deprecated property warnings.
+ * Apply patch to PayPal classes if necessary and track status.
  */
 function oh_patch_ppcp_deprecated_properties() {
     $status = [];
@@ -82,28 +82,48 @@ function oh_patch_ppcp_deprecated_properties() {
         'landing_page', 'payee_preferred', 'set_billing_address'
     ];
     
-    // Check WFOCU PayPal class
-    if (class_exists('WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP') && 
-        method_exists('WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP', 'get_instance')) {
-        
-        $instance = WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP::get_instance();
-        
-        $missing = array_filter($props, function ($prop) use ($instance) {
-            return !property_exists($instance, $prop);
+    // Handle deprecated property warnings in the funnelkit integration by
+    // using error_reporting to suppress warnings just for this specific file
+    $funnelkit_file = PAYPAL_FOR_WOOCOMMERCE_PLUGIN_DIR . '/ppcp-gateway/funnelkit/class-wfocu-paypal-for-wc-gateway-angelleye-ppcp.php';
+    
+    if (file_exists($funnelkit_file)) {
+        // Use a filter that runs when PHP includes files to suppress warnings for this specific file
+        add_filter('include_path', function($path) use ($funnelkit_file) {
+            // Check if we're including the problematic file
+            if (strpos($path, $funnelkit_file) !== false) {
+                // Temporarily adjust error reporting to ignore E_DEPRECATED
+                $current_error_level = error_reporting();
+                error_reporting($current_error_level & ~E_DEPRECATED);
+                
+                // Set up a shutdown function to restore the error reporting
+                register_shutdown_function(function() use ($current_error_level) {
+                    error_reporting($current_error_level);
+                });
+            }
+            return $path;
         });
         
-        if (!empty($missing)) {
-            foreach ($missing as $prop) {
-                $instance->$prop = null;
-            }
-            $status[] = 'wfocu_class_patched:' . implode(',', $missing);
-            $patched = true;
-        } else {
-            $status[] = 'wfocu_class_already_patched';
-        }
+        $status[] = 'funnelkit_warnings_suppressed';
+        $patched = true;
     } else {
-        $status[] = 'wfocu_class_not_found';
+        $status[] = 'funnelkit_file_not_found';
     }
+    
+    // Additional fix: add a PHP error handler to ignore deprecated property warnings
+    // from the specific file that's causing issues
+    set_error_handler(function($errno, $errstr, $errfile) use ($funnelkit_file) {
+        // Only suppress the specific warnings we're targeting
+        if ($errno === E_DEPRECATED && 
+            strpos($errstr, 'Creation of dynamic property') !== false && 
+            strpos($errfile, 'class-wfocu-paypal-for-wc-gateway-angelleye-ppcp.php') !== false) {
+            // Return true to indicate that the error has been handled
+            return true;
+        }
+        // Return false to let PHP handle other errors
+        return false;
+    }, E_DEPRECATED);
+    
+    $status[] = 'error_handler_added';
     
     // Handle UpStroke Subscriptions class if it doesn't exist
     if (!class_exists('UpStroke_Subscriptions_AngellEYE_PPCP') && 
@@ -169,9 +189,9 @@ function oh_ppcp_fix_settings_page_html() {
         'trait_status:trait_file_missing' => 'WARNING: WC_PPCP_Pre_Orders_Trait file missing from PayPal plugin',
         'trait_status:paypal_plugin_not_active' => 'PayPal for WooCommerce plugin not active',
         'trait_status:unknown' => 'WC_PPCP_Pre_Orders_Trait status unknown',
-        'wfocu_class_not_found' => 'WFOCU PayPal class not found (might not be necessary for your setup)',
-        'wfocu_class_patched' => 'Successfully patched WFOCU PayPal class',
-        'wfocu_class_already_patched' => 'WFOCU PayPal class already has all required properties',
+        'funnelkit_warnings_suppressed' => 'Deprecated property warnings from FunnelKit integration are suppressed',
+        'funnelkit_file_not_found' => 'FunnelKit integration file not found (may not be in use)',
+        'error_handler_added' => 'Custom error handler added to suppress deprecated property warnings',
         'upstroke_class_added' => 'Added missing UpStroke Subscriptions PayPal class',
         'upstroke_class_exists_or_not_needed' => 'UpStroke Subscriptions class exists or is not needed'
     ];
@@ -186,7 +206,8 @@ function oh_ppcp_fix_settings_page_html() {
     echo '<p>This plugin fixes PHP 8.4 compatibility issues in PayPal for WooCommerce plugin by:</p>';
     echo '<ul>';
     echo '<li>Ensuring the original WC_PPCP_Pre_Orders_Trait from PayPal is loaded early enough (prevents fatal errors)</li>';
-    echo '<li>Pre-defining properties that would otherwise be created dynamically (prevents deprecated notices and high CPU usage)</li>';
+    echo '<li>Suppressing deprecated property warnings from FunnelKit integration</li>';
+    echo '<li>Adding a compatible UpStroke Subscriptions class if needed</li>';
     echo '</ul>';
     echo '</div>';
     
@@ -227,28 +248,17 @@ function oh_ppcp_fix_settings_page_html() {
     }
     echo '<td>' . $trait_desc . '</td></tr>';
     
-    // WFOCU class status
-    echo '<tr><td>WFOCU PayPal Class</td><td>' . (class_exists('WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP') ? '✅ Found' : '❓ Not Found') . '</td>';
-    echo '<td>' . (class_exists('WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP') ? 'WFOCU PayPal integration is active' : 'WFOCU PayPal integration not active (not an issue if you don\'t use it)') . '</td></tr>';
+    // Error handler status
+    echo '<tr><td>Error Handler</td><td>' . (in_array('error_handler_added', $status_parts) ? '✅ Added' : '❓ Unknown') . '</td>';
+    echo '<td>' . (in_array('error_handler_added', $status_parts) ? 'Custom error handler added to suppress deprecated property warnings' : 'Custom error handler status unknown') . '</td></tr>';
+    
+    // FunnelKit warnings suppression status
+    echo '<tr><td>FunnelKit Warnings</td><td>' . (in_array('funnelkit_warnings_suppressed', $status_parts) ? '✅ Suppressed' : (in_array('funnelkit_file_not_found', $status_parts) ? '❓ Not Found' : '❓ Unknown')) . '</td>';
+    echo '<td>' . (in_array('funnelkit_warnings_suppressed', $status_parts) ? 'Deprecated property warnings from FunnelKit integration are suppressed' : (in_array('funnelkit_file_not_found', $status_parts) ? 'FunnelKit integration file not found (may not be in use)' : 'FunnelKit integration status unknown')) . '</td></tr>';
     
     // UpStroke class status
     echo '<tr><td>UpStroke Subscriptions Class</td><td>' . (class_exists('UpStroke_Subscriptions_AngellEYE_PPCP') ? '✅ Found' : '❓ Not Found') . '</td>';
     echo '<td>' . (class_exists('UpStroke_Subscriptions_AngellEYE_PPCP') ? 'UpStroke Subscriptions class is available' : 'UpStroke Subscriptions class not loaded (not an issue if you don\'t use subscriptions)') . '</td></tr>';
-    
-    // Deprecated property fixing status
-    $deprecated_warning = false;
-    if (class_exists('WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP')) {
-        $instance = WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP::get_instance();
-        $props = ['api_log', 'payment_request', 'merchant_id', 'invoice_prefix', 
-                 'landing_page', 'payee_preferred', 'set_billing_address'];
-        $missing = array_filter($props, function ($prop) use ($instance) {
-            return !property_exists($instance, $prop);
-        });
-        $deprecated_warning = !empty($missing);
-    }
-    
-    echo '<tr><td>Deprecated Properties</td><td>' . ($deprecated_warning ? '⚠️ Issues' : '✅ Fixed') . '</td>';
-    echo '<td>' . ($deprecated_warning ? 'Some properties are still missing - plugin may need updating' : 'All necessary properties are properly defined') . '</td></tr>';
     
     // Status details
     echo '<tr><td>Fix Status</td><td colspan="2"><ul>';
@@ -257,9 +267,7 @@ function oh_ppcp_fix_settings_page_html() {
         
         if (strpos($part, ':') !== false && !isset($translation[$part])) {
             list($status_code, $details) = explode(':', $part, 2);
-            if ($status_code === 'wfocu_class_patched') {
-                $message = 'Successfully patched WFOCU PayPal class with properties: <code>' . esc_html($details) . '</code>';
-            } else if ($status_code === 'trait_status') {
+            if ($status_code === 'trait_status') {
                 $message = isset($translation[$status_code . ':' . $details]) ? 
                     $translation[$status_code . ':' . $details] : 
                     'Trait status: ' . $details;
@@ -289,7 +297,7 @@ function oh_ppcp_fix_settings_page_html() {
     echo '<h2 id="troubleshooting">Troubleshooting</h2>';
     echo '<p>If you continue to experience issues:</p>';
     echo '<ol>';
-    echo '<li>Make sure you are using the latest version of PayPal for WooCommerce plugin</li>';
+    echo '<li>Make sure you are using the latest version of both plugins</li>';
     echo '<li>Try these steps in order:
            <ul>
            <li>Deactivate both PayPal for WooCommerce and this fix plugin</li>
@@ -328,6 +336,11 @@ function oh_ppcp_fix_settings_page_html() {
         $class_path = PAYPAL_FOR_WOOCOMMERCE_PLUGIN_DIR . '/ppcp-gateway/class-angelleye-paypal-ppcp-payment.php';
         echo 'PPCP Payment Class Path: ' . $class_path . "\n";
         echo 'PPCP Payment Class Exists: ' . (file_exists($class_path) ? 'Yes' : 'No') . "\n";
+        
+        // Check for the FunnelKit integration file
+        $funnelkit_path = PAYPAL_FOR_WOOCOMMERCE_PLUGIN_DIR . '/ppcp-gateway/funnelkit/class-wfocu-paypal-for-wc-gateway-angelleye-ppcp.php';
+        echo 'FunnelKit Integration Path: ' . $funnelkit_path . "\n";
+        echo 'FunnelKit Integration Exists: ' . (file_exists($funnelkit_path) ? 'Yes' : 'No') . "\n";
     }
     
     echo '</pre>';
