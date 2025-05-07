@@ -1,8 +1,8 @@
 <?php
 /**
- * File: includes/class-upstroke-subscriptions-angelleye-ppcp.php
+ * File: class-upstroke-subscriptions-angelleye-ppcp.php
  * Description: Defines the UpStroke Subscriptions class needed for PayPal compatibility
- * Version: 1.0.0
+ * Version: 1.1.0
  */
 
 if (!defined('ABSPATH')) {
