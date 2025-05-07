@@ -1,0 +1,69 @@
+<?php
+/**
+ * File: class-upstroke-subscriptions-angelleye-ppcp.php
+ * Description: Defines the UpStroke Subscriptions class needed for PayPal compatibility
+ * Version: 1.0.0
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+if (class_exists("UpStroke_Subscriptions_AngellEYE_PPCP") || !class_exists("WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP")) {
+    return;
+}
+
+/**
+ * UpStroke Subscriptions PayPal class
+ * Extends WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP to add subscription support
+ */
+class UpStroke_Subscriptions_AngellEYE_PPCP extends WFOCU_Paypal_For_WC_Gateway_AngellEYE_PPCP {
+    // Pre-define properties to prevent deprecated notices in PHP 8.4
+    public $api_log = null;
+    public $payment_request = null;
+    public $merchant_id = null;
+    public $invoice_prefix = null;
+    public $landing_page = null;
+    public $payee_preferred = null;
+    public $set_billing_address = null;
+    
+    /**
+     * Constructor for the class
+     */
+    public function __construct() {
+        add_action('wfocu_subscription_created_for_upsell', array($this, 'save_payment_token_to_subscription'), 10, 3);
+        add_filter('wfocu_order_copy_meta_keys', array($this, 'set_paypal_keys_to_copy'), 10, 1);
+    }
+    
+    /**
+     * Save payment token to subscription
+     */
+    public function save_payment_token_to_subscription($subscription, $key, $order) {
+        try {
+            if (!$order instanceof WC_Order) {
+                return;
+            }
+            
+            if ($this->get_key() !== $order->get_payment_method()) {
+                return;
+            }
+            
+            $subscription->update_meta_data('_paypal_order_id', $order->get_meta('_paypal_order_id', true));
+            $subscription->save();
+        } catch (Exception $ex) {
+            // Log exception if needed
+        }
+    }
+    
+    /**
+     * Set PayPal keys to copy
+     */
+    public function set_paypal_keys_to_copy($meta_keys) {
+        return $meta_keys;
+    }
+}
+
+// Initialize the class if WC_Subscriptions exists
+if (class_exists('WC_Subscriptions')) {
+    new UpStroke_Subscriptions_AngellEYE_PPCP();
+}
